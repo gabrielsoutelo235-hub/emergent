@@ -26,3 +26,9 @@ Recriar o aplicativo NEXUS OPS Dashboard - operational dashboard com tema Dark H
 - Real Lighthouse via Google PSI API
 - Brute force lockout
 - Password reset por email
+
+## Update — Anexos + PDF (Jan 2026)
+- Endpoint POST /api/coach/upload (multipart) salva arquivos em /tmp/nexus_uploads
+- /api/coach/chat aceita campo attachments[]; usa GPT-5.2 (texto) ou Gemini 2.5 Flash (com anexos)
+- Frontend: botão clip anexa imagens/PDF/TXT/CSV/MD/JSON, exibe chips dos arquivos
+- Botão "Baixar PDF" em cada resposta da IA (jsPDF, header NEXUS, paginação)

@@ -16,7 +16,9 @@ import logging
 import bcrypt
 import jwt as pyjwt
 import random
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+from emergentintegrations.llm.chat import LlmChat, UserMessage, FileContentWithMimeType
+from fastapi import UploadFile, File, Form
+import shutil
 
 # MongoDB
 mongo_url = os.environ['MONGO_URL']
@@ -102,6 +104,7 @@ class SnippetIn(BaseModel):
 class ChatIn(BaseModel):
     message: str
     session_id: Optional[str] = None
+    attachments: List[dict] = []  # [{file_id, path, mime_type, name}]
 
 class AnalyzeIn(BaseModel):
     url: str
@@ -292,6 +295,24 @@ async def overview(user=Depends(get_current_user)):
     }
 
 # ---------- Coach IA ----------
+UPLOAD_DIR = Path("/tmp/nexus_uploads")
+UPLOAD_DIR.mkdir(exist_ok=True)
+
+@api.post("/coach/upload")
+async def coach_upload(file: UploadFile = File(...), user=Depends(get_current_user)):
+    file_id = str(uuid.uuid4())
+    ext = Path(file.filename or "file").suffix or ""
+    save_path = UPLOAD_DIR / f"{file_id}{ext}"
+    with open(save_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+    return {
+        "file_id": file_id,
+        "name": file.filename,
+        "path": str(save_path),
+        "mime_type": file.content_type or "application/octet-stream",
+        "size": save_path.stat().st_size,
+    }
+
 @api.post("/coach/chat")
 async def coach_chat(data: ChatIn, user=Depends(get_current_user)):
     session_id = data.session_id or f"coach_{user['id']}"
@@ -312,11 +333,15 @@ Contexto atual do usuário:
 Sempre responda de forma objetiva, baseada em dados, com tom profissional e cyberpunk leve."""
 
     try:
+        # Switch to Gemini when attachments are present (GPT does not support file_contents in this lib)
+        has_attachments = bool(data.attachments)
+        provider, model = ("gemini", "gemini-2.5-flash") if has_attachments else ("openai", "gpt-5.2")
+
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
             session_id=session_id,
             system_message=system_msg,
-        ).with_model("openai", "gpt-5.2")
+        ).with_model(provider, model)
 
         # Replay last 6 messages for context
         history = await db.chat_messages.find(
@@ -324,14 +349,25 @@ Sempre responda de forma objetiva, baseada em dados, com tom profissional e cybe
         ).sort("created_at", -1).to_list(6)
         history.reverse()
 
-        msg = UserMessage(text=data.message)
+        msg_kwargs = {"text": data.message}
+        if data.attachments:
+            file_contents = []
+            for att in data.attachments:
+                p = att.get("path")
+                mt = att.get("mime_type") or "application/octet-stream"
+                if p and Path(p).exists():
+                    file_contents.append(FileContentWithMimeType(mime_type=mt, file_path=p))
+            if file_contents:
+                msg_kwargs["file_contents"] = file_contents
+        msg = UserMessage(**msg_kwargs)
         response_text = await chat.send_message(msg)
 
         # Persist
         now = datetime.now(timezone.utc).isoformat()
+        att_names = [a.get("name") for a in (data.attachments or [])]
         await db.chat_messages.insert_many([
             {"id": str(uuid.uuid4()), "user_id": user["id"], "session_id": session_id,
-             "role": "user", "content": data.message, "created_at": now},
+             "role": "user", "content": data.message, "attachments": att_names, "created_at": now},
             {"id": str(uuid.uuid4()), "user_id": user["id"], "session_id": session_id,
              "role": "assistant", "content": response_text, "created_at": now},
         ])
