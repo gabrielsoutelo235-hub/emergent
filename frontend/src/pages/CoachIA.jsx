@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import api from "../api";
 import { Send, Bot, Paperclip, X, FileText, Image as ImgIcon, Download } from "lucide-react";
-import jsPDF from "jspdf";
 
 const QUICK = [
   "Analisar meus KPIs atuais",
@@ -68,48 +67,76 @@ export default function CoachIA() {
     } finally { setBusy(false); }
   };
 
-  const downloadPdf = (content, idx) => {
-    const doc = new jsPDF({ unit: "pt", format: "a4" });
-    const margin = 48;
-    const pageW = doc.internal.pageSize.getWidth();
-    const pageH = doc.internal.pageSize.getHeight();
-    const maxW = pageW - margin * 2;
+  const downloadPdf = async (content, idx) => {
+    try {
+      const mod = await import("jspdf");
+      const JsPDFCtor = mod.jsPDF || mod.default;
+      const doc = new JsPDFCtor({ unit: "pt", format: "a4", compress: true });
+      const margin = 48;
+      const pageW = doc.internal.pageSize.getWidth();
+      const pageH = doc.internal.pageSize.getHeight();
+      const maxW = pageW - margin * 2;
 
-    // Header
-    doc.setFillColor(12, 14, 21);
-    doc.rect(0, 0, pageW, 70, "F");
-    doc.setTextColor(0, 229, 255);
-    doc.setFontSize(20);
-    doc.setFont("helvetica", "bold");
-    doc.text("NEXUS OPS — Análise IA", margin, 42);
-    doc.setFontSize(9);
-    doc.setTextColor(150, 165, 195);
-    doc.setFont("helvetica", "normal");
-    doc.text(`Coach NEXUS · ${new Date().toLocaleString("pt-BR")}`, margin, 58);
-
-    // Body
-    let y = 100;
-    doc.setTextColor(40, 50, 70);
-    doc.setFontSize(11);
-    doc.setFont("helvetica", "normal");
-
-    const lines = doc.splitTextToSize(content, maxW);
-    for (const line of lines) {
-      if (y > pageH - 60) { doc.addPage(); y = margin; }
-      doc.text(line, margin, y);
-      y += 16;
-    }
-
-    // Footer
-    const totalPages = doc.internal.getNumberOfPages();
-    for (let i = 1; i <= totalPages; i++) {
-      doc.setPage(i);
-      doc.setFontSize(8);
+      // Header bar
+      doc.setFillColor(12, 14, 21);
+      doc.rect(0, 0, pageW, 70, "F");
+      doc.setTextColor(0, 229, 255);
+      doc.setFontSize(20);
+      doc.setFont("helvetica", "bold");
+      doc.text("NEXUS OPS - Analise IA", margin, 42);
+      doc.setFontSize(9);
       doc.setTextColor(150, 165, 195);
-      doc.text(`NEXUS OPS · pág ${i}/${totalPages}`, pageW - margin, pageH - 24, { align: "right" });
-    }
+      doc.setFont("helvetica", "normal");
+      doc.text(`Coach NEXUS · ${new Date().toLocaleString("pt-BR")}`, margin, 58);
 
-    doc.save(`nexus-analise-${Date.now()}.pdf`);
+      // Body
+      let y = 100;
+      doc.setTextColor(40, 50, 70);
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "normal");
+
+      // Sanitize content (some unicode chars break default helvetica)
+      const safe = String(content || "")
+        .replace(/[\u2018\u2019]/g, "'")
+        .replace(/[\u201C\u201D]/g, '"')
+        .replace(/\u2014/g, "-")
+        .replace(/\u2013/g, "-")
+        .replace(/\u2022/g, "•");
+
+      const lines = doc.splitTextToSize(safe, maxW);
+      for (const line of lines) {
+        if (y > pageH - 60) { doc.addPage(); y = margin; }
+        doc.text(line, margin, y);
+        y += 16;
+      }
+
+      // Footer
+      const totalPages = doc.internal.getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8);
+        doc.setTextColor(150, 165, 195);
+        doc.text(`NEXUS OPS · pag ${i}/${totalPages}`, pageW - margin, pageH - 24, { align: "right" });
+      }
+
+      const filename = `nexus-analise-${Date.now()}.pdf`;
+
+      // Primary: trigger download via blob (works on iOS / mobile too)
+      const blob = doc.output("blob");
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      console.log("[PDF] gerado:", filename);
+    } catch (err) {
+      console.error("[PDF] erro:", err);
+      alert("Erro ao gerar PDF: " + (err?.message || err));
+    }
   };
 
   return (
