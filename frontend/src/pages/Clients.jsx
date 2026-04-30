@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import api from "../api";
-import { Plus, Edit2, Trash2, X } from "lucide-react";
+import { Plus, Edit2, Trash2, X, Brain } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { useConfirm } from "../components/Confirm";
 
 const STATUSES = ["Ativo", "Em Risco", "Onboarding", "Cancelado"];
@@ -8,6 +9,7 @@ const empty = { name: "", segment: "", status: "Ativo", mrr: 0, health: 80, next
 
 export default function Clients() {
   const confirm = useConfirm();
+  const navigate = useNavigate();
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
@@ -119,6 +121,7 @@ export default function Clients() {
                   <td style={{ fontSize: 12, color: "var(--text-muted)", maxWidth: 180 }}>{c.next_action || "—"}</td>
                   <td>
                     <div className="row" style={{ gap: 6 }}>
+                      <button className="btn btn-ghost" onClick={() => navigate(`/clients/${c.id}/intel`)} title="Painel de Dados" data-testid={`intel-client-${c.id}`} style={{ color: "var(--cyan)" }}><Brain size={14} /></button>
                       <button className="btn btn-ghost" onClick={() => open(c)} data-testid={`edit-client-${c.id}`}><Edit2 size={14} /></button>
                       <button className="btn btn-ghost" onClick={() => del(c.id, c.name)} data-testid={`delete-client-${c.id}`} style={{ color: "var(--red)" }}><Trash2 size={14} /></button>
                     </div>

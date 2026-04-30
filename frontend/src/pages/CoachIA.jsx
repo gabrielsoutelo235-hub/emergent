@@ -67,75 +67,26 @@ export default function CoachIA() {
     } finally { setBusy(false); }
   };
 
-  const downloadPdf = async (content, idx) => {
+  const downloadPdf = async (content) => {
     try {
-      const mod = await import("jspdf");
-      const JsPDFCtor = mod.jsPDF || mod.default;
-      const doc = new JsPDFCtor({ unit: "pt", format: "a4", compress: true });
-      const margin = 48;
-      const pageW = doc.internal.pageSize.getWidth();
-      const pageH = doc.internal.pageSize.getHeight();
-      const maxW = pageW - margin * 2;
-
-      // Header bar
-      doc.setFillColor(12, 14, 21);
-      doc.rect(0, 0, pageW, 70, "F");
-      doc.setTextColor(0, 229, 255);
-      doc.setFontSize(20);
-      doc.setFont("helvetica", "bold");
-      doc.text("NEXUS OPS - Analise IA", margin, 42);
-      doc.setFontSize(9);
-      doc.setTextColor(150, 165, 195);
-      doc.setFont("helvetica", "normal");
-      doc.text(`Coach NEXUS · ${new Date().toLocaleString("pt-BR")}`, margin, 58);
-
-      // Body
-      let y = 100;
-      doc.setTextColor(40, 50, 70);
-      doc.setFontSize(11);
-      doc.setFont("helvetica", "normal");
-
-      // Sanitize content (some unicode chars break default helvetica)
-      const safe = String(content || "")
-        .replace(/[\u2018\u2019]/g, "'")
-        .replace(/[\u201C\u201D]/g, '"')
-        .replace(/\u2014/g, "-")
-        .replace(/\u2013/g, "-")
-        .replace(/\u2022/g, "•");
-
-      const lines = doc.splitTextToSize(safe, maxW);
-      for (const line of lines) {
-        if (y > pageH - 60) { doc.addPage(); y = margin; }
-        doc.text(line, margin, y);
-        y += 16;
-      }
-
-      // Footer
-      const totalPages = doc.internal.getNumberOfPages();
-      for (let i = 1; i <= totalPages; i++) {
-        doc.setPage(i);
-        doc.setFontSize(8);
-        doc.setTextColor(150, 165, 195);
-        doc.text(`NEXUS OPS · pag ${i}/${totalPages}`, pageW - margin, pageH - 24, { align: "right" });
-      }
-
-      const filename = `nexus-analise-${Date.now()}.pdf`;
-
-      // Primary: trigger download via blob (works on iOS / mobile too)
-      const blob = doc.output("blob");
+      const { data } = await api.post("/coach/pdf", { content, title: "Análise IA" }, { responseType: "blob" });
+      const blob = new Blob([data], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
+      // open in new tab — guaranteed to work in iframes too
+      const win = window.open(url, "_blank");
+      // also offer download
       const a = document.createElement("a");
       a.href = url;
-      a.download = filename;
+      a.download = `nexus-analise-${Date.now()}.pdf`;
       a.rel = "noopener";
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      console.log("[PDF] gerado:", filename);
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      if (!win) console.log("[PDF] popup bloqueado, usando apenas download");
     } catch (err) {
       console.error("[PDF] erro:", err);
-      alert("Erro ao gerar PDF: " + (err?.message || err));
+      alert("Erro ao gerar PDF: " + (err?.response?.data?.detail || err?.message || err));
     }
   };
 
@@ -172,8 +123,8 @@ export default function CoachIA() {
                   </div>
                 )}
                 {m.role === "assistant" && m.content && !m.content.startsWith("Erro") && (
-                  <button className="btn btn-ghost" style={{ fontSize: 11, padding: "4px 10px" }} onClick={() => downloadPdf(m.content, idx)} data-testid={`download-pdf-${idx}`}>
-                    <Download size={12} /> Baixar PDF
+                  <button className="btn btn-primary" style={{ fontSize: 12, padding: "6px 14px" }} onClick={() => downloadPdf(m.content)} data-testid={`download-pdf-${idx}`}>
+                    <Download size={14} /> Baixar PDF
                   </button>
                 )}
               </div>

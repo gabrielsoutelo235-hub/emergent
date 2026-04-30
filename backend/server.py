@@ -18,7 +18,15 @@ import jwt as pyjwt
 import random
 from emergentintegrations.llm.chat import LlmChat, UserMessage, FileContentWithMimeType
 from fastapi import UploadFile, File, Form
+from fastapi.responses import StreamingResponse
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.colors import HexColor
+from reportlab.lib.units import cm
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.enums import TA_LEFT
 import shutil
+import io
 
 # MongoDB
 mongo_url = os.environ['MONGO_URL']
@@ -208,6 +216,93 @@ async def delete_client(cid: str, user=Depends(get_current_user)):
     })
     return {"ok": True}
 
+# ---------- Client Intelligence Panel ----------
+class IntelIn(BaseModel):
+    asset_type: str = "site"  # site | app | ecommerce
+    asset_url: str = ""
+    manual_data: dict = {}
+    code_paste: str = ""
+
+@api.get("/clients/{cid}/intel")
+async def get_intel(cid: str, user=Depends(get_current_user)):
+    client = await db.clients.find_one({"id": cid, "user_id": user["id"]}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Cliente não encontrado")
+    intel = await db.intel.find_one({"client_id": cid, "user_id": user["id"]}, {"_id": 0})
+    if not intel:
+        intel = {"client_id": cid, "user_id": user["id"], "asset_type": "site", "asset_url": "", "manual_data": {}, "code_paste": "", "screenshots": [], "code_files": [], "analyses": []}
+    return {"client": client, "intel": intel}
+
+@api.put("/clients/{cid}/intel")
+async def save_intel(cid: str, data: IntelIn, user=Depends(get_current_user)):
+    payload = data.model_dump()
+    payload.update({"client_id": cid, "user_id": user["id"], "updated_at": datetime.now(timezone.utc).isoformat()})
+    await db.intel.update_one({"client_id": cid, "user_id": user["id"]}, {"$set": payload}, upsert=True)
+    return {"ok": True}
+
+@api.post("/clients/{cid}/intel/upload")
+async def upload_intel(cid: str, kind: str = Form(...), file: UploadFile = File(...), user=Depends(get_current_user)):
+    file_id = str(uuid.uuid4())
+    ext = Path(file.filename or "f").suffix
+    save_path = UPLOAD_DIR / f"{file_id}{ext}"
+    with open(save_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+    item = {"file_id": file_id, "name": file.filename, "path": str(save_path), "mime_type": file.content_type or "", "size": save_path.stat().st_size}
+    field = "screenshots" if kind == "screenshot" else "code_files"
+    await db.intel.update_one({"client_id": cid, "user_id": user["id"]}, {"$push": {field: item}, "$setOnInsert": {"client_id": cid, "user_id": user["id"]}}, upsert=True)
+    return item
+
+@api.post("/clients/{cid}/intel/analyze")
+async def analyze_intel(cid: str, user=Depends(get_current_user)):
+    client = await db.clients.find_one({"id": cid, "user_id": user["id"]}, {"_id": 0})
+    intel = await db.intel.find_one({"client_id": cid, "user_id": user["id"]}, {"_id": 0}) or {}
+    if not client:
+        raise HTTPException(status_code=404, detail="Cliente não encontrado")
+
+    snippets = await db.snippets.find({"user_id": user["id"]}, {"_id": 0}).to_list(20)
+    snip_summary = "\n".join([f"- {s['title']} ({s['language']})" for s in snippets[:10]]) or "(nenhum)"
+
+    md = intel.get("manual_data", {}) or {}
+    md_str = "\n".join([f"- {k}: {v}" for k, v in md.items()]) or "(sem dados manuais)"
+
+    files = (intel.get("screenshots") or []) + (intel.get("code_files") or [])
+    file_contents = []
+    for f in files[:6]:
+        p = f.get("path")
+        mt = f.get("mime_type") or "application/octet-stream"
+        if p and Path(p).exists():
+            file_contents.append(FileContentWithMimeType(mime_type=mt, file_path=p))
+
+    code_paste = intel.get('code_paste', '') or ''
+    code_paste_block = ('\nCode paste:\n' + code_paste[:2000]) if code_paste else ''
+    sys_msg = f"""Você é o Coach NEXUS analisando o ativo digital de um cliente. Estruture a resposta em markdown:
+## Diagnóstico Visual (UX/UI) — analise screenshots
+## Diagnóstico Técnico — analise código (snippets/zip)
+## Cruzamento de Dados — relacione com dados manuais
+## Argumentos para o Cliente — 5 pontos PAS (Problema-Agitação-Solução)
+## Plano de Ação — passos práticos
+## Perguntas para Preencher Lacunas — 3 perguntas que ainda faltam
+
+Cliente: {client.get('name')} | Segmento: {client.get('segment','—')} | Status: {client.get('status')} | MRR: R$ {client.get('mrr',0)}
+Ativo: {intel.get('asset_type','site')} {intel.get('asset_url','')}
+Dados manuais:
+{md_str}
+Code Hub disponível:
+{snip_summary}{code_paste_block}"""
+
+    try:
+        provider, model = ("gemini", "gemini-2.5-flash") if file_contents else ("openai", "gpt-5.2")
+        chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"intel_{cid}", system_message=sys_msg).with_model(provider, model)
+        kwargs = {"text": "Faça a análise completa do ativo deste cliente seguindo a estrutura."}
+        if file_contents: kwargs["file_contents"] = file_contents
+        result = await chat.send_message(UserMessage(**kwargs))
+        entry = {"id": str(uuid.uuid4()), "content": result, "created_at": datetime.now(timezone.utc).isoformat()}
+        await db.intel.update_one({"client_id": cid, "user_id": user["id"]}, {"$push": {"analyses": entry}}, upsert=True)
+        return entry
+    except Exception as e:
+        logger.error(f"intel analyze: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ---------- Transactions / Financial ----------
 @api.get("/transactions")
 async def list_transactions(user=Depends(get_current_user)):
@@ -383,6 +478,61 @@ async def coach_history(user=Depends(get_current_user)):
         {"user_id": user["id"], "session_id": session_id}, {"_id": 0}
     ).sort("created_at", 1).to_list(200)
     return msgs
+
+class PdfReq(BaseModel):
+    content: str
+    title: str = "Análise IA"
+
+@api.post("/coach/pdf")
+async def coach_pdf(data: PdfReq, user=Depends(get_current_user)):
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=2*cm, rightMargin=2*cm, topMargin=2.5*cm, bottomMargin=2*cm, title="NEXUS OPS - " + data.title)
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle("title", parent=styles["Heading1"], textColor=HexColor("#00b8cc"), fontSize=22, spaceAfter=4)
+    sub_style = ParagraphStyle("sub", parent=styles["Normal"], textColor=HexColor("#6b7a99"), fontSize=10, spaceAfter=18)
+    body_style = ParagraphStyle("body", parent=styles["Normal"], fontSize=11, leading=16, alignment=TA_LEFT, textColor=HexColor("#1f2937"))
+    h_style = ParagraphStyle("h", parent=styles["Heading2"], textColor=HexColor("#0c0e15"), fontSize=14, spaceBefore=10, spaceAfter=6)
+
+    story = [
+        Paragraph("NEXUS OPS — Análise IA", title_style),
+        Paragraph(f"Coach NEXUS · {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M')} UTC · Usuário: {user.get('email','')}", sub_style),
+    ]
+
+    # Render content paragraph by paragraph; treat lines starting with # as headings
+    for raw in data.content.split("\n"):
+        line = raw.rstrip()
+        if not line.strip():
+            story.append(Spacer(1, 8))
+            continue
+        # escape for reportlab
+        safe = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        # bold inline **text**
+        import re as _re
+        safe = _re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", safe)
+        if line.startswith("### "):
+            story.append(Paragraph(safe[4:], h_style))
+        elif line.startswith("## "):
+            story.append(Paragraph(safe[3:], h_style))
+        elif line.startswith("# "):
+            story.append(Paragraph(safe[2:], h_style))
+        else:
+            story.append(Paragraph(safe, body_style))
+
+    def _footer(canvas, _doc):
+        canvas.saveState()
+        canvas.setFillColor(HexColor("#6b7a99"))
+        canvas.setFont("Helvetica", 8)
+        canvas.drawRightString(A4[0]-2*cm, 1.2*cm, f"NEXUS OPS · pág {canvas.getPageNumber()}")
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
+    buf.seek(0)
+    filename = f"nexus-analise-{int(datetime.now(timezone.utc).timestamp())}.pdf"
+    return StreamingResponse(
+        buf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 # ---------- Site Analyzer ----------
 @api.post("/analyze")

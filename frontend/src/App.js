@@ -12,6 +12,7 @@ import CodeHub from "./pages/CodeHub";
 import CoachIA from "./pages/CoachIA";
 import SiteAnalyzer from "./pages/SiteAnalyzer";
 import Settings from "./pages/Settings";
+import ClientIntel from "./pages/ClientIntel";
 import "./App.css";
 
 function ProtectedShell() {
@@ -33,6 +34,7 @@ function ProtectedShell() {
           <Routes>
             <Route path="/" element={<Overview />} />
             <Route path="/clients" element={<Clients />} />
+            <Route path="/clients/:id/intel" element={<ClientIntel />} />
             <Route path="/financial" element={<Financial />} />
             <Route path="/code" element={<CodeHub />} />
             <Route path="/coach" element={<CoachIA />} />

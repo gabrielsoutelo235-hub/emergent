@@ -5,8 +5,8 @@ import { Code2 } from "lucide-react";
 export default function Login() {
   const { login, register } = useAuth();
   const [mode, setMode] = useState("login");
-  const [email, setEmail] = useState("admin@nexus.ops");
-  const [password, setPassword] = useState("admin123");
+  const [email, setEmail] = useState("admim.chefe@nexusopus.com");
+  const [password, setPassword] = useState("20082008G#g");
   const [name, setName] = useState("");
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
@@ -66,7 +66,7 @@ export default function Login() {
         </div>
 
         <div style={{ marginTop: 18, padding: 12, background: "var(--bg-elevated)", borderRadius: 8, fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}>
-          <strong style={{ color: "var(--cyan)" }}>Demo:</strong> admin@nexus.ops / admin123
+          <strong style={{ color: "var(--cyan)" }}>Demo:</strong> admim.chefe@nexusopus.com / 20082008G#g
         </div>
       </form>
     </div>
