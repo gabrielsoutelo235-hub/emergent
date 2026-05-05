@@ -54,9 +54,22 @@ export function AuthProvider({ children }) {
 
 export const useAuth = () => useContext(AuthCtx);
 
-export function formatErr(detail) {
-  if (!detail) return "Erro inesperado";
-  if (typeof detail === "string") return detail;
-  if (Array.isArray(detail)) return detail.map(e => e.msg || JSON.stringify(e)).join(", ");
-  return String(detail);
+export function formatErr(error) {
+  // Accept either an error object or a detail value
+  if (!error) return "Erro desconhecido";
+  // If it's an axios error object
+  if (error.response) {
+    const detail = error.response.data?.detail;
+    if (detail) {
+      if (typeof detail === "string") return detail;
+      if (Array.isArray(detail)) return detail.map(e => e.msg || JSON.stringify(e)).join(", ");
+      return String(detail);
+    }
+    return `Erro ${error.response.status}: ${error.response.statusText || "resposta inválida do servidor"}`;
+  }
+  if (error.request) {
+    return "Servidor não respondeu. Verifique sua conexão e tente novamente.";
+  }
+  if (typeof error === "string") return error;
+  return error.message || "Erro inesperado";
 }

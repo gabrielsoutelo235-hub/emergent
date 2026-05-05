@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import api from "../api";
-import { Plus, Trash2, X, Code2, Copy } from "lucide-react";
+import { Plus, Trash2, X, Code2, Copy, Archive } from "lucide-react";
 import { useConfirm } from "../components/Confirm";
 
 const langs = ["javascript", "typescript", "python", "bash", "html", "css", "sql", "json"];
@@ -13,6 +13,26 @@ export default function CodeHub() {
   const [form, setForm] = useState(empty);
   const [tagInput, setTagInput] = useState("");
   const [filter, setFilter] = useState("");
+  const [importing, setImporting] = useState(false);
+  const archiveRef = useState(null);
+
+  const onImportArchive = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const { data } = await api.post("/snippets/import-archive", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      alert(`${data.imported} arquivo(s) importado(s) com sucesso!`);
+      await load();
+    } catch (ex) {
+      alert("Erro ao importar: " + (ex.response?.data?.detail || ex.message));
+    } finally {
+      setImporting(false);
+      e.target.value = "";
+    }
+  };
 
   const load = async () => { const { data } = await api.get("/snippets"); setList(data); };
   useEffect(() => { load(); }, []);
@@ -46,7 +66,13 @@ export default function CodeHub() {
         <button className="btn btn-primary" onClick={() => setModal(true)} data-testid="new-snippet-btn"><Plus size={16} /> Novo Snippet</button>
       </div>
 
-      <input className="input" style={{ maxWidth: 380, marginBottom: 18 }} placeholder="Buscar título ou tag..." value={filter} onChange={(e) => setFilter(e.target.value)} />
+      <div className="row" style={{ marginBottom: 18, gap: 12 }}>
+        <input className="input" style={{ maxWidth: 380, flex: 1 }} placeholder="Buscar título ou tag..." value={filter} onChange={(e) => setFilter(e.target.value)} />
+        <label className="btn" style={{ cursor: importing ? "wait" : "pointer", opacity: importing ? 0.6 : 1 }}>
+          <Archive size={16} /> {importing ? "Importando..." : "Importar ZIP / RAR / 7Z"}
+          <input type="file" accept=".zip,.rar,.7z" onChange={onImportArchive} disabled={importing} style={{ display: "none" }} data-testid="import-archive-input" />
+        </label>
+      </div>
 
       {filtered.length === 0 ? (
         <div className="empty"><div className="empty-icon"><Code2 size={48} style={{ opacity: 0.4 }} /></div>

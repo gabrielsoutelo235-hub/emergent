@@ -346,6 +346,50 @@ async def delete_snippet(sid: str, user=Depends(get_current_user)):
     await db.snippets.delete_one({"id": sid, "user_id": user["id"]})
     return {"ok": True}
 
+CODE_EXTS = {".js", ".jsx", ".ts", ".tsx", ".py", ".html", ".css", ".scss", ".json", ".md", ".txt", ".sql", ".sh", ".yaml", ".yml", ".go", ".rs", ".java", ".kt", ".rb", ".php", ".c", ".cpp", ".h"}
+LANG_MAP = {".js":"javascript",".jsx":"javascript",".ts":"typescript",".tsx":"typescript",".py":"python",".html":"html",".css":"css",".scss":"css",".json":"json",".md":"markdown",".sql":"sql",".sh":"bash",".yaml":"yaml",".yml":"yaml",".go":"go",".rs":"rust",".java":"java",".rb":"ruby",".php":"php"}
+
+@api.post("/snippets/import-archive")
+async def import_archive(file: UploadFile = File(...), user=Depends(get_current_user)):
+    import subprocess, tempfile
+    suffix = Path(file.filename or "arch").suffix.lower()
+    if suffix not in (".zip", ".rar", ".7z"):
+        raise HTTPException(status_code=400, detail="Formato não suportado. Use ZIP, RAR ou 7Z.")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        arch_path = Path(tmpdir) / f"upload{suffix}"
+        with open(arch_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        extract_dir = Path(tmpdir) / "ext"
+        extract_dir.mkdir()
+        # Use unar (handles zip, rar, 7z natively)
+        proc = subprocess.run(["unar", "-o", str(extract_dir), "-f", str(arch_path)], capture_output=True, text=True, timeout=60)
+        if proc.returncode != 0:
+            raise HTTPException(status_code=400, detail=f"Erro ao extrair: {proc.stderr[:200]}")
+        imported = []
+        for p in extract_dir.rglob("*"):
+            if not p.is_file(): continue
+            ext = p.suffix.lower()
+            if ext not in CODE_EXTS: continue
+            if p.stat().st_size > 200_000: continue  # skip huge
+            try:
+                code = p.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                continue
+            doc = {
+                "id": str(uuid.uuid4()),
+                "user_id": user["id"],
+                "title": p.name,
+                "language": LANG_MAP.get(ext, "text"),
+                "code": code[:50000],
+                "description": f"Importado de {file.filename}",
+                "tags": [Path(file.filename or "").stem],
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            await db.snippets.insert_one(doc)
+            imported.append({"id": doc["id"], "title": doc["title"]})
+            if len(imported) >= 100: break
+        return {"imported": len(imported), "files": imported}
+
 # ---------- KPIs / Overview ----------
 @api.get("/overview")
 async def overview(user=Depends(get_current_user)):
@@ -470,6 +514,12 @@ Sempre responda de forma objetiva, baseada em dados, com tom profissional e cybe
     except Exception as e:
         logger.error(f"Coach chat error: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao consultar Coach IA: {str(e)}")
+
+@api.delete("/coach/history")
+async def clear_coach_history(user=Depends(get_current_user)):
+    session_id = f"coach_{user['id']}"
+    res = await db.chat_messages.delete_many({"user_id": user["id"], "session_id": session_id})
+    return {"deleted": res.deleted_count}
 
 @api.get("/coach/history")
 async def coach_history(user=Depends(get_current_user)):

@@ -19,7 +19,8 @@ export default function Login() {
       if (mode === "login") await login(email, password);
       else await register(email, password, name || email.split("@")[0]);
     } catch (ex) {
-      setErr(formatErr(ex.response?.data?.detail) || ex.message);
+      console.error("[auth] submit error:", ex);
+      setErr(formatErr(ex));
     } finally {
       setLoading(false);
     }

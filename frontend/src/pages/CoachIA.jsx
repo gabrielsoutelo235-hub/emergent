@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import api from "../api";
-import { Send, Bot, Paperclip, X, FileText, Image as ImgIcon, Download } from "lucide-react";
+import { Send, Bot, Paperclip, X, FileText, Image as ImgIcon, Download, Trash2 } from "lucide-react";
+import { useConfirm } from "../components/Confirm";
 
 const QUICK = [
   "Analisar meus KPIs atuais",
@@ -15,6 +16,7 @@ function fileIcon(mt = "") {
 }
 
 export default function CoachIA() {
+  const confirm = useConfirm();
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -22,6 +24,17 @@ export default function CoachIA() {
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef(null);
   const endRef = useRef(null);
+
+  const clearHistory = async () => {
+    const ok = await confirm("Apagar todo o histórico de conversas com o Coach IA? Esta ação não pode ser desfeita.", "Limpar histórico");
+    if (!ok) return;
+    try {
+      await api.delete("/coach/history");
+      setMessages([]);
+    } catch (e) {
+      alert("Erro: " + (e.response?.data?.detail || e.message));
+    }
+  };
 
   useEffect(() => {
     api.get("/coach/history").then(({ data }) => setMessages(data)).catch(() => {});
@@ -97,6 +110,9 @@ export default function CoachIA() {
           <h1 className="page-title">Interrogatório IA</h1>
           <div className="page-subtitle">Coach NEXUS · GPT-5.2 (texto) / Gemini 2.5 (anexos) · análise estratégica</div>
         </div>
+        <button className="btn btn-danger" onClick={clearHistory} disabled={messages.length === 0} data-testid="clear-history-btn">
+          <Trash2 size={14} /> Apagar Histórico
+        </button>
       </div>
 
       <div className="chat-shell">
